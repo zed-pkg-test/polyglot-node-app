@@ -1,0 +1,10 @@
+{
+  "name": "polyglot-node-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consumes the nodejs slice of zedtest/polyglot-lib via zed",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  }
+}

@@ -1,0 +1,128 @@
+name: zed e2e (polyglot, nodejs slice)
+
+# Proves the per-language publish/install model with nothing but GitHub Actions:
+# one upstream repo (polyglot-lib) fans out to four packages, this app consumes
+# only the nodejs one, and asking for a different language is refused.
+#
+# No registry server and no secrets: the file:// registry *is* the registry.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this app
+        uses: actions/checkout@v4
+        with:
+          path: app
+          persist-credentials: false
+
+      # zed-cli path-depends on ../zed-interfaces, so they must be siblings.
+      - name: Check out zed-cli
+        uses: actions/checkout@v4
+        with:
+          repository: zed-pkg/zed-cli
+          path: zed-cli
+          persist-credentials: false
+      - name: Check out zed-interfaces
+        uses: actions/checkout@v4
+        with:
+          repository: zed-pkg/zed-interfaces
+          path: zed-interfaces
+          persist-credentials: false
+      - name: Check out the polyglot library
+        uses: actions/checkout@v4
+        with:
+          repository: zed-pkg-test/polyglot-lib
+          path: polyglot-lib
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the zed CLI
+        run: cargo build --release --bin zed --manifest-path zed-cli/Cargo.toml
+
+      - name: Point zed at a hermetic file registry
+        run: |
+          {
+            echo "ZED=$GITHUB_WORKSPACE/zed-cli/target/release/zed"
+            echo "ZED_PKG_REGISTRY=file://$RUNNER_TEMP/zed-reg"
+            echo "ZED_PKG_HOME=$RUNNER_TEMP/zed-home"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/zed-reg" "$RUNNER_TEMP/zed-home"
+
+      - name: Publish all four language packages from one repo
+        working-directory: polyglot-lib
+        run: |
+          "$ZED" publish --skip-vcs-checks --allow-dirty
+          # One repo in, four independently installable packages out.
+          test "$(find "$RUNNER_TEMP/zed-reg" -name '*.tar.gz' | wc -l)" -eq 4
+
+      - name: Let npm run (the "complement, don't replace" half)
+        working-directory: app
+        run: npm install
+
+      - name: zed install
+        working-directory: app
+        run: "$ZED install"
+
+      - name: The nodejs slice resolved and only it was fetched
+        working-directory: app
+        run: |
+          NODE_PATH="$(cat .zed/node_path)" npm start
+          installed=.vendor/.zed/zedtest/polyglot-lib-nodejs
+          test -f "$installed/index.js"
+          # A Node consumer must not receive the other languages' source.
+          for stray in client.go pyproject.toml Cargo.toml; do
+            if [ -e "$installed/$stray" ]; then
+              echo "::error::$stray leaked into the nodejs package"
+              exit 1
+            fi
+          done
+
+      - name: Every install is described in .zed/paths.json
+        working-directory: app
+        run: |
+          node -e '
+            const idx = require("./.zed/paths.json");
+            const pkg = idx.packages.find(p => p.package === "zedtest/polyglot-lib-nodejs");
+            if (!pkg) throw new Error("package missing from paths.json");
+            if (pkg.language !== "nodejs" || pkg.ecosystem !== "npm") {
+              throw new Error(`wrong tags: ${JSON.stringify(pkg)}`);
+            }
+            console.log("paths.json:", JSON.stringify(pkg));
+          '
+
+      - name: A different language is refused, not silently installed
+        working-directory: app
+        run: |
+          # The negative case this whole design exists for: the Go slice must
+          # not land in an npm project just because the name was typed.
+          scratch="$RUNNER_TEMP/wrong-language"
+          mkdir -p "$scratch"
+          cp package.json "$scratch/"
+          sed 's/polyglot-lib-nodejs/polyglot-lib-golang/' .zpkg.toml > "$scratch/.zpkg.toml"
+          cd "$scratch"
+          if "$ZED" install > out.log 2>&1; then
+            echo "::error::a gomod package installed into an npm project"
+            cat out.log
+            exit 1
+          fi
+          cat out.log
+          grep -q 'gomod' out.log
+          grep -q 'npm' out.log
+          # The error must point at the package that would have worked.
+          grep -q 'zedtest/polyglot-lib-nodejs' out.log
+          # …and the documented override must still work.
+          "$ZED" install --allow-ecosystem-mismatch

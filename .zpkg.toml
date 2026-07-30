@@ -1,0 +1,22 @@
+[package]
+org = "zedtest"
+name = "polyglot-node-app"
+version = "0.1.0"
+description = "Consumes the nodejs slice of zedtest/polyglot-lib"
+license = "MIT"
+
+[package.repository]
+vcs = "git"
+url = "https://github.com/zed-pkg-test/polyglot-node-app"
+
+# Only the Node slice. Asking for `zedtest/polyglot-lib-golang` here is refused
+# by `zed install`: the artifact declares the `gomod` ecosystem and this project
+# is `npm`. See the negative step in .github/workflows/zed-e2e.yml.
+[dependencies]
+"zedtest/polyglot-lib-nodejs" = "^0.1.0"
+
+# Keep zed's tree beside node_modules rather than inside it: zed complements
+# npm, it does not replace it.
+[install]
+dir = ".vendor/.zed"
+adapter = "node"
