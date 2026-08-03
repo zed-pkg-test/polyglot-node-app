@@ -1,0 +1,90 @@
+name: two-source Zed consumer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZED_CLI_REF: 7e5ac1897a872223f8316ef1c3342a2fa1982504
+  ZED_INTERFACES_REF: 6e893ad0f28ccfbb7722f007d75e88548f1bcfdf
+  POLYGLOT_REF: e62ceb6337324a294d4fc861692a267ff0db97d0
+  SHARED_SCHEMA_REF: 41cec5076791555d4b72e72da0a42888da0522d0
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-cli
+          ref: ${{ env.ZED_CLI_REF }}
+          path: zed-cli
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-interfaces
+          ref: ${{ env.ZED_INTERFACES_REF }}
+          path: zed-interfaces
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg-test/polyglot-lib
+          ref: ${{ env.POLYGLOT_REF }}
+          path: polyglot-lib
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg-test/shared-schema
+          ref: ${{ env.SHARED_SCHEMA_REF }}
+          path: shared-schema
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Build exact Zed candidate
+        run: cargo build --locked --release --bin zed --manifest-path zed-cli/Cargo.toml
+      - name: Publish both source repositories
+        run: |
+          set -euo pipefail
+          export ZED="$GITHUB_WORKSPACE/zed-cli/target/release/zed"
+          export ZED_PKG_REGISTRY="file://$RUNNER_TEMP/registry"
+          export ZED_PKG_HOME="$RUNNER_TEMP/home"
+          mkdir -p "$RUNNER_TEMP/registry" "$RUNNER_TEMP/home"
+          (cd polyglot-lib && "$ZED" publish --skip-vcs-checks)
+          (cd shared-schema && "$ZED" publish --skip-vcs-checks)
+      - name: Install and execute both dependencies
+        working-directory: app
+        run: |
+          set -euo pipefail
+          export ZED="$GITHUB_WORKSPACE/zed-cli/target/release/zed"
+          export ZED_PKG_REGISTRY="file://$RUNNER_TEMP/registry"
+          export ZED_PKG_HOME="$RUNNER_TEMP/home"
+          npm install
+          "$ZED" install --install-mode copy
+          NODE_PATH="$(cat .zed/node_path)" npm start
+          test -f .vendor/.zed/zedtest/polyglot-lib-nodejs/index.js
+          test -f .vendor/.zed/zedtest/shared-schema/schemas/job-envelope.schema.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const schema = JSON.parse(fs.readFileSync('.vendor/.zed/zedtest/shared-schema/schemas/job-envelope.schema.json'));
+          if (schema.title !== 'JobEnvelope') throw new Error('wrong shared schema');
+          const paths = require('./.zed/paths.json');
+          for (const name of ['zedtest/polyglot-lib-nodejs', 'zedtest/shared-schema']) {
+            if (!paths.packages.some((p) => p.package === name)) throw new Error(`missing ${name}`);
+          }
+          NODE
