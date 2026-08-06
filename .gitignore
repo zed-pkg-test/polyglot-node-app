@@ -2,3 +2,7 @@
 .zed/
 node_modules/
 .zpkg.lock
+tmp
+temp
+tmp/worktrees
+temp/worktrees
