@@ -1,0 +1,22 @@
+// Standard namespaces are global, no imports necessary.
+// process.stdin === stdio.in === stdin.in by identity.
+// process.stdout === stdio.out; process.stderr === stdio.err.
+
+pub gen* read_stdin(): Iterator<String> {
+  for const line of stdin.in.stream() {
+    yield line;
+  }
+  return;
+}
+
+pub routine main(): void {
+  // Observable is a native Oreslang prelude module, not a Java observable.
+  // Each element is pulled only as the downstream iterator requests it.
+  for const message of Observable.from_ch(process.stdin) {
+    Stdio.println_blocking(message);
+  }
+  Stdio.flush_blocking();
+  Stdio.eprintln_blocking("stdin closed");
+  Stdio.err_flush_blocking();
+  return;
+}

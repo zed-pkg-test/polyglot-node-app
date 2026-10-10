@@ -1,0 +1,11 @@
+// Native Oreslang pull Observable adapter.
+// A channel has ONE consumer per delivered item; this is not a broadcast bus.
+// The generator does not run or register an input read until a consumer pulls.
+define module Observable as
+  pub generator fnc from_ch<T>(Channel<T> source): Iterator<T> {
+    for const item of source {
+      yield item;
+    }
+    return;
+  }
+end

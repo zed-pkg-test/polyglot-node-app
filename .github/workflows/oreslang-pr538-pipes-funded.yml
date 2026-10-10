@@ -1,0 +1,82 @@
+name: Oreslang exact-tree shell-pipe conformance
+on:
+  push:
+    branches: [ci/oreslang-pr538-full-funded-20261010]
+
+permissions:
+  contents: read
+concurrency:
+  group: oreslang-pr538-shell-pipes-isolation
+  cancel-in-progress: true
+jobs:
+  pipes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify unchanged Oreslang source Git tree
+        run: |
+          test "$(git rev-parse HEAD:oreslang-source)" = "1707c0ddde26011ace2800c9cb838f882e91778d"
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.3'
+          java-version: '25'
+          distribution: graalvm
+          cache: maven
+      - name: Compile exact-source JVM runtime and dependency path
+        working-directory: oreslang-source
+        run: |
+          mvn -B -ntp -DskipTests package
+          mvn -B -ntp -DskipTests dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+      - name: Real shell pipe with stdout/stderr separation and EOF
+        working-directory: oreslang-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          seq -f 'line%05g' 0 999 > /tmp/ores-expected.txt
+          timeout 45s bash -o pipefail -c 'cat /tmp/ores-expected.txt | java --enable-native-access=ALL-UNNAMED -p "target/classes:$(cat target/classpath.txt)" -m dev.oreslang/dev.oreslang.launcher.OresMain examples/native-stdio-channels.ores > /tmp/ores-actual.txt 2> /tmp/ores-err.txt'
+          diff -u /tmp/ores-expected.txt /tmp/ores-actual.txt
+          grep -Fx 'stdin closed' /tmp/ores-err.txt
+      - name: Rust-verified slow stdout sink and OS-pipe backpressure
+        working-directory: oreslang-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/ores-slow-sink.rs <<'RUST'
+          use std::io::{self, BufRead};
+          use std::thread;
+          use std::time::Duration;
+          fn main() {
+              let mut count = 0usize;
+              for item in io::stdin().lock().lines() {
+                  let line = item.expect("stdio pipe read");
+                  assert_eq!(line, format!("line{count:05}"));
+                  count += 1;
+                  thread::sleep(Duration::from_micros(100));
+              }
+              assert_eq!(count, 12_000, "lost or duplicated pipe frames");
+          }
+          RUST
+          rustc -O /tmp/ores-slow-sink.rs -o /tmp/ores-slow-sink
+          seq -f 'line%05g' 0 11999 > /tmp/ores-large-input.txt
+          timeout 70s bash -o pipefail -c 'cat /tmp/ores-large-input.txt | java --enable-native-access=ALL-UNNAMED -p "target/classes:$(cat target/classpath.txt)" -m dev.oreslang/dev.oreslang.launcher.OresMain examples/native-stdio-channels.ores 2>/tmp/ores-slow-stderr.txt | /tmp/ores-slow-sink'
+          grep -Fx 'stdin closed' /tmp/ores-slow-stderr.txt
+      - name: Early consumer break terminates without hanging on stdin
+        working-directory: oreslang-source
+        shell: bash
+        run: |
+          set -eu
+          cat > target/ores-early-break.ores <<'ORES'
+          pub routine main(): void {
+            for const line of stdio.in {
+              writech stdio.out, line + "\n";
+              break;
+            }
+            return;
+          }
+          ORES
+          timeout 30s bash -c 'seq 1 20000 | java --enable-native-access=ALL-UNNAMED -p "target/classes:$(cat target/classpath.txt)" -m dev.oreslang/dev.oreslang.launcher.OresMain target/ores-early-break.ores' > /tmp/ores-early.out
+          test "$(wc -l < /tmp/ores-early.out)" -eq 1
+          grep -Fx '1' /tmp/ores-early.out

@@ -1,0 +1,80 @@
+name: Exact Oreslang PR538 mirror validation
+on:
+  push:
+    branches: [ci/oreslang-pr538-full-funded-20261010]
+
+permissions:
+  contents: read
+concurrency:
+  group: oreslang-pr538-ambient-isolation
+  cancel-in-progress: true
+jobs:
+  test:
+    name: JDK25 unit and integration verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fail closed unless the exact source tree is present
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD:oreslang-source)" = "1707c0ddde26011ace2800c9cb838f882e91778d"
+          echo "Exact Oreslang source tree verified for PR538"
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.3'
+          java-version: '25'
+          distribution: graalvm
+          cache: maven
+      - name: Run native stdio and generator regression suite
+        working-directory: oreslang-source
+        run: mvn -B -ntp -Dtest=NativeStdioChannelsTest,NativeChannelGeneratorTest,GlobalStdioStreamTest,LinkedProgramStdinTest,ChannelRuntimeTest test
+      - name: Run full runtime verification
+        working-directory: oreslang-source
+        run: mvn -B -ntp -Dores.runtime.carriers=native verify
+  native-aot:
+    name: Native AOT compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact source tree
+        run: test "$(git rev-parse HEAD:oreslang-source)" = "1707c0ddde26011ace2800c9cb838f882e91778d"
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.3'
+          java-version: '25'
+          distribution: graalvm
+          cache: maven
+      - name: Compile native-image AOT runtime
+        working-directory: oreslang-source
+        run: mvn -B -ntp -Pnative-aot -DskipTests package
+      - name: Run native AOT sample
+        working-directory: oreslang-source
+        run: ./target/ores-aot --mode=aot --platform=linux examples/native-stdio-channels.ores
+  native-hybrid:
+    name: Native hybrid compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact source tree
+        run: test "$(git rev-parse HEAD:oreslang-source)" = "1707c0ddde26011ace2800c9cb838f882e91778d"
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.3'
+          java-version: '25'
+          distribution: graalvm
+          cache: maven
+      - name: Compile native-image hybrid runtime
+        working-directory: oreslang-source
+        run: mvn -B -ntp -Pnative-hybrid -DskipTests package
+      - name: Run native hybrid sample
+        working-directory: oreslang-source
+        run: ./target/ores-hybrid --mode=hybrid --platform=linux examples/native-stdio-channels.ores

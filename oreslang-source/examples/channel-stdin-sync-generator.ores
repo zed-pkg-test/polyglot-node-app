@@ -1,0 +1,23 @@
+// Executable channel contract for stdin-style line consumption.
+// stdin should ultimately be a read-only Channel<String> with the same semantics.
+// No async or await is needed: readch suspends the Oreslang continuation.
+
+pub gen* read_channel(Channel<String> source): Iterator<String> {
+  for let i = 0; i < 2; i++ {
+    const line = readch source;
+    yield line;
+  }
+  return;
+}
+
+pub routine main(): void {
+  val Channel<String> input = Channel.new<String>(1);
+  writech input, "alpha";
+  // With capacity one, the second write remains pending until consumption.
+  val Future<void> pending = nb writech input, "beta";
+
+  for const line of read_channel(input) {
+    stdio.println(line);
+  }
+  return;
+}

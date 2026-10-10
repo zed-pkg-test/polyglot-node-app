@@ -1,0 +1,58 @@
+// Oreslang-owned printing/formatting policy. No Java interop.
+// The runtime descriptor bridge only handles OS bytes and channel rendezvous.
+define module Stdio as
+  // Returns a Future so callers can observe bounded admission/backpressure
+  // failures; it is not an unconditional detached fire-and-forget write.
+  pub fnc println(String text): Future<void> {
+    return nb writech stdio.out, text + "\n";
+  }
+
+  pub fnc eprintln(String text): Future<void> {
+    return nb writech stdio.err, text + "\n";
+  }
+
+  // Synchronous-looking calls suspend the source continuation until
+  // the bounded sink accepts the frame. No async keyword or await needed.
+  pub fnc println_blocking(String text): void {
+    writech stdio.out, text + "\n";
+    return;
+  }
+
+  pub fnc eprintln_blocking(String text): void {
+    writech stdio.err, text + "\n";
+    return;
+  }
+
+  // Ordered flush barrier: the sink worker reads the next frame only
+  // after flushing every prior one. Accepting the zero-byte marker therefore
+  // proves earlier accepted frames reached the host OutputStream.flush().
+  pub fnc flush_blocking(): void {
+    writech stdio.out, "";
+    return;
+  }
+
+  pub fnc flush_async(): Future<void> {
+    return nb writech stdio.out, "";
+  }
+
+  pub fnc err_flush_blocking(): void {
+    writech stdio.err, "";
+    return;
+  }
+
+  pub fnc err_flush_async(): Future<void> {
+    return nb writech stdio.err, "";
+  }
+
+  // A single channel frame keeps the formatted line atomic relative to
+  // other channel writers. Variadic declaration syntax can forward here
+  // once stable; native List<String> is the supported form today.
+  pub fnc println_parts_blocking(List<String> parts): void {
+    let String text = "";
+    for const part of parts {
+      text = text + part;
+    }
+    writech stdio.out, text + "\n";
+    return;
+  }
+end
