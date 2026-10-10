@@ -1,0 +1,21 @@
+name: Oreslang PR538 runner allocation preflight
+on:
+  push:
+    branches:
+      - ci/oreslang-pr538-runner-probe-20261010
+permissions:
+  contents: read
+jobs:
+  runner-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove a GitHub-hosted runner was allocated
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_ID=$RUNNER_NAME"
+          uname -a
+          command -v git
+          command -v java || true
+          echo "PR538 preflight executed"
