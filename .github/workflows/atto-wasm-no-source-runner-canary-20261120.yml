@@ -1,0 +1,21 @@
+name: Atto Wasm no-source runner allocation canary
+on:
+  push:
+    branches:
+      - ci/atto-wasm-runner-canary-20261120
+permissions:
+  contents: read
+jobs:
+  admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Verify allocated runner and exact public canary revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GITHUB_SHA"
+          echo "CANARY_HEAD=$GITHUB_SHA"
+          echo "CANARY_NODE=$(node --version)"
+          echo "CANARY_REPO=zed-pkg-test/polyglot-node-app"
+          echo "PRIVATE_ATTO_SOURCE_NOT_EXPORTED=true"
